@@ -1,0 +1,63 @@
+/*********
+Проект: СЕТЬ МОНИТОРИНГА ЭЛЕКТРОННОЙ ГИГИЕНЫ
+Горина София Вячеславовна, 9 «И» класс ГБОУ «Школа №1557 им. П.Л.Капицы»
+*********/
+
+//Для начала подключаем необходимые библиотеки: Adafruit_Sensor и Adafruit_BME280 для взаимодействия с датчиком BME280;
+//библиотеку painlessMesh для работы с ячеистой сетью и Arduino_JSON для простого создания и обработки строк JSON.
+ 
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
+#include "painlessMesh.h"
+#include <Arduino_JSON.h>
+
+// Детали MESH сети
+#define   MESH_PREFIX     "Gorina_Sofi" //имя сети
+#define   MESH_PASSWORD   "12345678" //паспорт сети
+#define   MESH_PORT       5555 //номер порта по умолчанию
+
+
+Scheduler userScheduler; // Создаем новый планировщик с именем userScheduler
+painlessMesh  mesh; // Создаеv объект painlessMesh под названием mesh для работы с ячеистой сетью.
+
+
+// Функция receivedCallback() выводит имя отправителя (from) и содержимое сообщения (msg.c_str()).
+void receivedCallback( uint32_t from, String &msg ) {
+  Serial.printf("Датчик № %u %s\n", from, msg.c_str());
+  JSONVar myObject = JSON.parse(msg.c_str());
+  int node = myObject["Цех"];
+  double temp = myObject["Температура"];
+  double hum = myObject["Влажность"];
+  double pres = myObject["Давление"];
+}
+
+void newConnectionCallback(uint32_t nodeId) {
+  Serial.printf("Новое подключение, nodeId = %u\n", nodeId);
+}
+
+void changedConnectionCallback() {
+  Serial.printf("Изменение соединений в сети\n");
+}
+// Функция nodeTimeAdjustedCallback() запускается, когда сеть корректирует время, чтобы все узлы были синхронизированы. Она выводит смещение.
+void nodeTimeAdjustedCallback(int32_t offset) {
+  Serial.printf("Adjusted time %u. Offset = %d\n", mesh.getNodeTime(),offset);
+}
+// В setup() инициализируйте последовательный монитор.
+void setup() {
+  Serial.begin(115200);
+
+  //Типы отладочных сообщений( ERROR | MESH_STATUS | CONNECTION | SYNC | COMMUNICATION | GENERAL | MSG_TYPES | REMOTE ); // all types on
+  mesh.setDebugMsgTypes( ERROR | STARTUP );  // set before init() so that you can see startup messages
+// Инициализация сетки с помощью деталей, определенных ранее
+  mesh.init( MESH_PREFIX, MESH_PASSWORD, &userScheduler, MESH_PORT );
+  mesh.onReceive(&receivedCallback);
+  mesh.onNewConnection(&newConnectionCallback);
+  mesh.onChangedConnections(&changedConnectionCallback);
+  mesh.onNodeTimeAdjusted(&nodeTimeAdjustedCallback);
+
+}
+
+void loop() {
+  // it will run the user scheduler as well
+  mesh.update();
+}
