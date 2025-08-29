@@ -1,0 +1,101 @@
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
+#include "painlessMesh.h" // библиотек для создания сети MESH 
+#include <Arduino_JSON.h>
+#include "Adafruit_CCS811.h"
+#include <SoftwareSerial.h>
+
+// Данные сети
+#define   MESH_PREFIX     "Gorina_Sofi" //имя сети
+#define   MESH_PASSWORD   "12345678" //паспорт сети
+#define   MESH_PORT       5555 //порт по умолчанию
+//объект сенсора BME280
+Adafruit_BME280 bme;
+//объект сенсора SDS011 
+SDS011 my_sds;
+float p10, p25;
+int error;
+
+String nodeNumber = "Цех №2"; // уникальное имя датчика
+
+//Строка для отправки на другие узлы показаний датчиковна 
+String readings;
+
+Scheduler userScheduler; // Планировщик задач userScheduler
+painlessMesh  mesh; // объект с именем mesh для работы с ячеистой сетью
+
+void sendMessage() ; 
+String getReadings(); 
+
+//Задача taskSendMessage вызывыющая функцию sendMessage()каждые 5 секунд;
+Task taskSendMessage(TASK_SECOND * 5 , TASK_FOREVER, &sendMessage);
+
+// опрос датчиков, формирование тела сообщения
+String getReadings () {
+  JSONVar jsonReadings;
+  jsonReadings["Объект"] = nodeNumber;
+  //опрос датчика BME280
+  jsonReadings["Температура"] = String(bme.readTemperature(), 2);
+  jsonReadings["Влажность"] = String(bme.readHumidity(), 2);
+  jsonReadings["Давление"] = String(bme.readPressure()/100.0F, 2);
+  // опрос датчика SDS011
+  error = my_sds.read(&p25, &p10);
+  jsonReadings["PM2.5"] = String(p25);
+  jsonReadings["PM10"] = String(p10);
+  readings = JSON.stringify(jsonReadings);
+  return readings;
+}
+// sendMessage()- Функция отправляет сообщение всем узлам в сети
+void sendMessage () {
+  String msg = getReadings();
+  mesh.sendBroadcast(msg);
+}
+
+//Инициализация BME280
+void initBME(){
+  my_sds.begin(0, 3);
+  if (!bme.begin(0x76)) {
+    Serial.println("Сенсор BME280 не найден!");
+    while (1);
+  }  
+}
+
+// Прием сообщения
+void receivedCallback( uint32_t from, String &msg ) {
+  Serial.printf("Датчик № %u %s\n", from, msg.c_str());
+}
+
+void newConnectionCallback(uint32_t nodeId) {
+  Serial.printf("Новое подключение, nodeId = %u\n", nodeId);
+}
+
+void changedConnectionCallback() {
+  Serial.printf("Изменение состояния сети\n");
+}
+
+void nodeTimeAdjustedCallback(int32_t offset) {
+  Serial.printf("Корректировка времени %u. Offset = %d\n", mesh.getNodeTime(),offset);
+}
+
+void setup() {
+  Serial.begin(115200);// скорость последовательного порта, бод
+  
+  initBME();
+
+  //mesh.setDebugMsgTypes( ERROR | MESH_STATUS | CONNECTION | SYNC | COMMUNICATION | GENERAL | MSG_TYPES | REMOTE ); // all types on
+  mesh.setDebugMsgTypes( ERROR | STARTUP );  //выбор сообщений от системы
+
+  mesh.init( MESH_PREFIX, MESH_PASSWORD, &userScheduler, MESH_PORT );
+  mesh.onReceive(&receivedCallback);
+  mesh.onNewConnection(&newConnectionCallback);
+  mesh.onChangedConnections(&changedConnectionCallback);
+  mesh.onNodeTimeAdjusted(&nodeTimeAdjustedCallback);
+
+  userScheduler.addTask(taskSendMessage);
+  taskSendMessage.enable();
+}
+
+void loop() {
+  // Обновление данных сети, бесконечный цикл
+  mesh.update();
+}
